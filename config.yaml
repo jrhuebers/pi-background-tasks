@@ -1,0 +1,2 @@
+# Default delay before a foreground bash command is handed to the background.
+background_after_seconds: 30

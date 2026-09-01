@@ -1,0 +1,19 @@
+{
+  "name": "pi-background-tasks",
+  "version": "0.1.0",
+  "description": "Minimal managed background tasks for Pi.",
+  "private": true,
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "background-tasks"],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "yaml": "2.9.0"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
