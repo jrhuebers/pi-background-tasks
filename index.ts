@@ -9,7 +9,8 @@
 import { createHash } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { FooterComponent } from "@earendil-works/pi-coding-agent";
@@ -114,8 +115,12 @@ function sessionToken(ctx: ExtensionContext): string {
 	return createHash("sha256").update(sessionFile).digest("hex").slice(0, 12);
 }
 
-function logRoot(cwd: string, token: string): string {
-	return join(cwd, ".pi-background-tasks", token);
+function logRoot(token: string): string {
+	const configuredStateHome = process.env.XDG_STATE_HOME?.trim();
+	const stateHome = configuredStateHome && isAbsolute(configuredStateHome)
+		? configuredStateHome
+		: join(homedir(), ".local", "state");
+	return join(stateHome, "pi", "background-tasks", token);
 }
 
 function compactDescription(command: string): string {
@@ -356,8 +361,9 @@ function watchBackgroundProcess(pi: ExtensionAPI, runtime: Runtime, job: Runtime
 
 function createProcess(command: string, cwd: string, logPath: string, statusPath: string): ProcessHandle {
 	const createdAt = Date.now();
-	mkdirSync(dirname(logPath), { recursive: true });
+	mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
 	writeFileSync(logPath, `=== started ${formatLocalTimestamp(createdAt)} ===\n`, { flag: "a", mode: 0o600 });
+	writeFileSync(statusPath, "", { flag: "w", mode: 0o600 });
 	const logFd = openSync(logPath, "a", 0o600);
 	const script = [
 		"set +e",
@@ -408,8 +414,8 @@ function newJob(runtime: Runtime, params: {
 	};
 }
 
-function jobPaths(runtime: Runtime, cwd: string, number: number): { logPath: string; statusPath: string } {
-	const root = logRoot(cwd, runtime.sessionToken);
+function jobPaths(runtime: Runtime, number: number): { logPath: string; statusPath: string } {
+	const root = logRoot(runtime.sessionToken);
 	const stem = `job-${number}`;
 	return { logPath: join(root, `${stem}.log`), statusPath: join(root, `${stem}.status`) };
 }
@@ -533,7 +539,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			const maxRunSeconds = requirePositiveSeconds(p.max_run_seconds, "max_run_seconds");
 			const backgroundAfterSeconds = requireNonNegativeSeconds(p.background_after_seconds, "background_after_seconds") ?? runtime.config.backgroundAfterSeconds;
 			const notifyOnExit = p.notify_on_exit !== false;
-			const paths = jobPaths(runtime, ctx.cwd, runtime.nextJobNumber + 1);
+			const paths = jobPaths(runtime, runtime.nextJobNumber + 1);
 			const process = createProcess(p.command, ctx.cwd, paths.logPath, paths.statusPath);
 
 			if (p.run_in_background) {

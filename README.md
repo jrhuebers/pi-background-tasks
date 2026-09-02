@@ -36,10 +36,13 @@ Job IDs are session-local (`job-1`, `job-2`, …). `extend` sets a new total
 runtime limit measured from process creation; it must exceed the current finite
 limit. Jobs run in their own process group, so `kill` terminates the group.
 
-Logs are written below `.pi-background-tasks/<session-token>/` in the current
-project. The extension persists active job state in the Pi session. On an
-explicit Pi quit it sends `SIGTERM` to all managed process groups; on reload it
-restores monitoring of still-running groups.
+Logs are written below
+`${XDG_STATE_HOME:-~/.local/state}/pi/background-tasks/<session-token>/`, outside
+the current project. If `XDG_STATE_HOME` is unset or relative, the default is
+`~/.local/state`. Log and status files are created with owner-only permissions.
+The extension persists active job state in the Pi session. On an explicit Pi
+quit it sends `SIGTERM` to all managed process groups; on reload it restores
+monitoring of still-running groups.
 
 ## TUI
 
