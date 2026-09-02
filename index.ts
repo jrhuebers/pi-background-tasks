@@ -313,7 +313,7 @@ function notifyFinished(pi: ExtensionAPI, job: RuntimeJob): void {
 			display: true,
 			details: { jobId: job.id, status: job.status, exitCode: job.exitCode, logPath: job.logPath },
 		},
-		{ triggerTurn: true, deliverAs: "followUp" },
+		{ triggerTurn: true, deliverAs: "steer" },
 	);
 }
 
