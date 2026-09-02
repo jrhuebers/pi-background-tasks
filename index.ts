@@ -9,8 +9,8 @@
 import { createHash } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
-import { dirname, isAbsolute, join } from "node:path";
-import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { FooterComponent } from "@earendil-works/pi-coding-agent";
@@ -116,11 +116,7 @@ function sessionToken(ctx: ExtensionContext): string {
 }
 
 function logRoot(token: string): string {
-	const configuredStateHome = process.env.XDG_STATE_HOME?.trim();
-	const stateHome = configuredStateHome && isAbsolute(configuredStateHome)
-		? configuredStateHome
-		: join(homedir(), ".local", "state");
-	return join(stateHome, "pi", "background-tasks", token);
+	return join(tmpdir(), "pi-background-tasks", token);
 }
 
 function compactDescription(command: string): string {
