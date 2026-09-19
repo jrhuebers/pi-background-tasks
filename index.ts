@@ -62,6 +62,7 @@ type PersistedState = {
 	nextJobNumber: number;
 	sessionToken: string;
 	jobs: Job[];
+	finishedJobIds?: string[];
 };
 
 type BackgroundConfig = {
@@ -88,6 +89,7 @@ type Runtime = {
 	nextJobNumber: number;
 	sessionToken: string;
 	jobs: Map<string, RuntimeJob>;
+	finishedJobIds: Set<string>;
 	onChange?: () => void;
 	pollTimer?: NodeJS.Timeout;
 };
@@ -254,6 +256,7 @@ function serialise(runtime: Runtime): PersistedState {
 		nextJobNumber: runtime.nextJobNumber,
 		sessionToken: runtime.sessionToken,
 		jobs: [...runtime.jobs.values()].map(({ child: _child, deadlineTimer: _deadline, killTimer: _kill, ...job }) => job),
+		finishedJobIds: [...runtime.finishedJobIds],
 	};
 }
 
@@ -328,6 +331,12 @@ function finishJob(pi: ExtensionAPI, runtime: Runtime, job: RuntimeJob, exit: Pr
 	job.endedAt = Date.now();
 	clearJobTimers(job);
 	runtime.jobs.delete(job.id);
+	runtime.finishedJobIds.add(job.id);
+	while (runtime.finishedJobIds.size > 4_096) {
+		const oldest = runtime.finishedJobIds.values().next().value as string | undefined;
+		if (oldest === undefined) break;
+		runtime.finishedJobIds.delete(oldest);
+	}
 	persist(pi, runtime);
 	runtime.onChange?.();
 	emitFinished(pi, job);
@@ -452,6 +461,7 @@ function restore(pi: ExtensionAPI, ctx: ExtensionContext, config: BackgroundConf
 		nextJobNumber: saved?.nextJobNumber ?? 0,
 		sessionToken: saved?.sessionToken ?? sessionToken(ctx),
 		jobs: new Map(),
+		finishedJobIds: new Set(saved?.finishedJobIds?.filter((id): id is string => typeof id === "string") ?? []),
 	};
 	for (const value of saved?.jobs ?? []) {
 		if (!value || typeof value !== "object" || value.status !== "running" || typeof value.id !== "string" || typeof value.pgid !== "number") continue;
