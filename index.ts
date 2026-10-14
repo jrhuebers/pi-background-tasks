@@ -118,7 +118,11 @@ function sessionToken(ctx: ExtensionContext): string {
 }
 
 function logRoot(token: string): string {
-	return join(tmpdir(), "pi-background-tasks", token);
+	// Keep temporary logs isolated between users on shared hosts. Do not rely on
+	// $USER: the process UID is stable even when the environment is incomplete or
+	// inherited from another launcher.
+	const user = process.getuid?.() ?? process.env.USER ?? process.env.LOGNAME ?? "unknown";
+	return join(tmpdir(), `pi-background-tasks-${user}`, token);
 }
 
 function compactDescription(command: string): string {
