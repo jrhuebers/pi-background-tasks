@@ -36,12 +36,7 @@ Job IDs are session-local (`job-1`, `job-2`, …). `extend` sets a new total
 runtime limit measured from process creation; it must exceed the current finite
 limit. Jobs run in their own process group, so `kill` terminates the group.
 
-Logs are written below Node's `os.tmpdir()/pi-background-tasks/<session-token>/`,
-outside the current project. On Linux this is typically `/tmp`; on macOS it
-honors the system temporary-directory location (usually under `/var/folders`).
-This also keeps the extension portable to Windows. Log and status files are
-created with owner-only permissions and may be removed by the operating system
-as temporary data.
+Logs are written below Node's `os.tmpdir()/pi-background-tasks-<uid>/<session-token>/`, outside the current project, so users on shared hosts do not collide. On Linux this is typically `/tmp`; on macOS it honors the system temporary-directory location (usually under `/var/folders`). This also keeps the extension portable to Windows. Log and status files are created with owner-only permissions and may be removed by the operating system as temporary data.
 The extension persists active job state in the Pi session. On an explicit Pi
 quit it sends `SIGTERM` to all managed process groups; on reload it restores
 monitoring of still-running groups.
