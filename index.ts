@@ -6,8 +6,8 @@
  * lifecycle events rather than becoming process managers themselves.
  */
 
-import { createHash } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -113,7 +113,7 @@ function readConfig(): BackgroundConfig {
 }
 
 function sessionToken(ctx: ExtensionContext): string {
-	const sessionFile = ctx.sessionManager.getSessionFile() ?? `ephemeral-${process.pid}`;
+	const sessionFile = ctx.sessionManager.getSessionFile() ?? `ephemeral-${randomUUID()}`;
 	return createHash("sha256").update(sessionFile).digest("hex").slice(0, 12);
 }
 
@@ -368,33 +368,51 @@ function watchBackgroundProcess(pi: ExtensionAPI, runtime: Runtime, job: Runtime
 	emitStarted(pi, job);
 }
 
+function removeInvocationFiles(logPath: string, statusPath: string): void {
+	// Only newly allocated invocation directories reach this helper, not restored
+	// legacy job paths. Never recursively remove a shared session directory.
+	try { rmSync(logPath, { force: true }); } catch { /* best effort */ }
+	try { rmSync(statusPath, { force: true }); } catch { /* best effort */ }
+	try { rmdirSync(dirname(logPath)); } catch { /* best effort; directory must be empty */ }
+}
+
 function createProcess(command: string, cwd: string, logPath: string, statusPath: string): ProcessHandle {
 	const createdAt = Date.now();
-	mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
-	writeFileSync(logPath, `=== started ${formatLocalTimestamp(createdAt)} ===\n`, { flag: "a", mode: 0o600 });
-	writeFileSync(statusPath, "", { flag: "w", mode: 0o600 });
-	const logFd = openSync(logPath, "a", 0o600);
-	const script = [
-		"set +e",
-		"(",
-		command,
-		")",
-		"code=$?",
-		`printf '%s\\n' \"$code\" > ${shellQuote(statusPath)}`,
-		"exit \"$code\"",
-	].join("\n");
-	const child = spawn("/bin/bash", ["-lc", script], {
-		cwd,
-		detached: true,
-		stdio: ["ignore", logFd, logFd],
-	});
-	closeSync(logFd);
-	if (!child.pid) throw new Error("could not start background process");
-	const exit = new Promise<ProcessExit>((resolve) => {
-		child.once("exit", (code, signal) => resolve({ code, signal }));
-		child.once("error", () => resolve({ code: null, signal: null }));
-	});
-	return { child, pid: child.pid, pgid: child.pid, logPath, statusPath, createdAt, exit };
+	try {
+		mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
+		writeFileSync(logPath, `=== started ${formatLocalTimestamp(createdAt)} ===\n`, { flag: "a", mode: 0o600 });
+		writeFileSync(statusPath, "", { flag: "w", mode: 0o600 });
+		const script = [
+			"set +e",
+			"(",
+			command,
+			")",
+			"code=$?",
+			`printf '%s\\n' \"$code\" > ${shellQuote(statusPath)}`,
+			"exit \"$code\"",
+		].join("\n");
+		const logFd = openSync(logPath, "a", 0o600);
+		try {
+			const child = spawn("/bin/bash", ["-lc", script], {
+				cwd,
+				detached: true,
+				stdio: ["ignore", logFd, logFd],
+			});
+			// Failed spawns can return without a PID, then emit an error on the next
+			// tick. Install the listener before throwing so it cannot crash Pi.
+			const exit = new Promise<ProcessExit>((resolve) => {
+				child.once("exit", (code, signal) => resolve({ code, signal }));
+				child.once("error", () => resolve({ code: null, signal: null }));
+			});
+			if (!child.pid) throw new Error("could not start background process");
+			return { child, pid: child.pid, pgid: child.pid, logPath, statusPath, createdAt, exit };
+		} finally {
+			closeSync(logFd);
+		}
+	} catch (error) {
+		removeInvocationFiles(logPath, statusPath);
+		throw error;
+	}
 }
 
 function newJob(runtime: Runtime, params: {
@@ -423,10 +441,13 @@ function newJob(runtime: Runtime, params: {
 	};
 }
 
-function jobPaths(runtime: Runtime, number: number): { logPath: string; statusPath: string } {
+function invocationPaths(runtime: Runtime): { logPath: string; statusPath: string } {
 	const root = logRoot(runtime.sessionToken);
-	const stem = `job-${number}`;
-	return { logPath: join(root, `${stem}.log`), statusPath: join(root, `${stem}.status`) };
+	mkdirSync(root, { recursive: true, mode: 0o700 });
+	// Reserve storage before spawning, independently of background-job IDs.
+	// mkdtemp is atomic even across multiple runtimes using the same session.
+	const directory = mkdtempSync(join(root, "invocation-"));
+	return { logPath: join(directory, "output.log"), statusPath: join(directory, "exit.status") };
 }
 
 function renderJobs(runtime: Runtime): string {
@@ -549,7 +570,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			const maxRunSeconds = requirePositiveSeconds(p.max_run_seconds, "max_run_seconds");
 			const backgroundAfterSeconds = requireNonNegativeSeconds(p.background_after_seconds, "background_after_seconds") ?? runtime.config.backgroundAfterSeconds;
 			const notifyOnExit = p.notify_on_exit !== false;
-			const paths = jobPaths(runtime, runtime.nextJobNumber + 1);
+			const paths = invocationPaths(runtime);
 			const process = createProcess(p.command, ctx.cwd, paths.logPath, paths.statusPath);
 
 			if (p.run_in_background) {
@@ -603,7 +624,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 			const exit = outcome.kind === "exit" ? outcome.exit : await process.exit;
 			const output = readTail(process.logPath, 50_000) || "(no output)";
-			try { rmSync(process.logPath, { force: true }); rmSync(process.statusPath, { force: true }); } catch { /* best-effort foreground cleanup */ }
+			removeInvocationFiles(process.logPath, process.statusPath);
 			if (outcome.kind === "timed_out") throw new Error(`${output}\n\nCommand exceeded max_run_seconds=${maxRunSeconds}.`);
 			if (outcome.kind === "aborted") throw new Error(`${output}\n\nCommand aborted.`);
 			if (exit.code !== 0) throw new Error(`${output}\n\nCommand exited with code ${exit.code ?? "signal"}.`);

@@ -5,6 +5,9 @@
   "private": true,
   "type": "module",
   "keywords": ["pi-package", "pi-extension", "background-tasks"],
+  "scripts": {
+    "test": "node --experimental-import-meta-resolve --test tests/*.test.mjs"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
